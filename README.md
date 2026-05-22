@@ -42,6 +42,16 @@ Use the same deployed web app URL on every phone. The Google Sheet is the shared
 
 When one phone adds spending, the app appends that record to the Sheet. Other phones will see it after opening the app, refreshing, or tapping **Sync**. If person names are edited, tap **Save** in settings, then tap **Sync** on the other phones.
 
+## If Sync Shows Sheet Error
+
+Check these in order:
+
+1. The URL in app settings must be the deployed Apps Script **Web app** URL ending in `/exec`, not the Apps Script editor URL and not a `/dev` URL.
+2. After editing `google-apps-script.gs`, deploy a **New version** in Apps Script. Saving the script is not enough.
+3. Open the `/exec` URL in a browser. It should show JSON that starts with `{"ok":true`.
+4. Push the newest `app.js` and `sw.js` to GitHub Pages, then fully close and reopen the app on each phone.
+5. If the home-screen app still uses old files, remove the home-screen icon and add it again from the GitHub Pages URL.
+
 The script creates three tabs in the Sheet:
 
 - `People`

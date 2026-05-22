@@ -486,7 +486,10 @@
     let status = "Synced";
     let ok = true;
     try {
-      await postSheet(payload);
+      const postResult = await postSheet(payload);
+      if (postResult && postResult.ok === false) {
+        throw new Error(postResult.error || "Sheet write failed");
+      }
       await delay(350);
       const result = await getSheet();
       applySheetState(result);
@@ -519,8 +522,7 @@
 
   async function postSheet(payload) {
     if (isAppsScriptUrl(state.apiUrl)) {
-      await postSheetNoCors(payload);
-      return { ok: true };
+      return getSheetJsonp(payload);
     }
     const response = await fetch(state.apiUrl, {
       method: "POST",
@@ -530,7 +532,7 @@
     return response.json();
   }
 
-  function getSheetJsonp() {
+  function getSheetJsonp(payload) {
     return new Promise(function (resolve, reject) {
       const callbackName = "__houseSplitSheet" + Date.now().toString(36);
       const script = document.createElement("script");
@@ -547,7 +549,13 @@
         cleanup();
         reject(new Error("Sheet sync failed"));
       };
-      script.src = withQuery(state.apiUrl, "mode=read&callback=" + encodeURIComponent(callbackName));
+      const query = ["callback=" + encodeURIComponent(callbackName)];
+      if (payload) {
+        query.push("payload=" + encodeURIComponent(JSON.stringify(payload)));
+      } else {
+        query.push("mode=read");
+      }
+      script.src = withQuery(state.apiUrl, query.join("&"));
       document.head.appendChild(script);
 
       function cleanup() {
@@ -555,15 +563,6 @@
         delete window[callbackName];
         script.remove();
       }
-    });
-  }
-
-  function postSheetNoCors(payload) {
-    return fetch(state.apiUrl, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
     });
   }
 
@@ -591,6 +590,9 @@
   }
 
   function applySheetState(result) {
+    if (!result || result.ok === false) {
+      throw new Error((result && result.error) || "Sheet read failed");
+    }
     if (Array.isArray(result.people) && result.people.length === 3) {
       state.people = result.people;
     }

@@ -9,47 +9,65 @@ const EXPENSE_HEADERS = ["id", "date", "item", "amount", "paidBy", "participants
 const ARCHIVE_HEADERS = ["closedAt", "cycle", "id", "date", "item", "amount", "paidBy", "participants", "createdAt"];
 
 function doGet(event) {
-  const data = readState();
-  const callback = event && event.parameter && event.parameter.callback;
-  if (callback) {
-    return ContentService.createTextOutput(callback + "(" + JSON.stringify(data) + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+  try {
+    const params = (event && event.parameter) || {};
+    const data = params.payload ? withLock(function () {
+      return handlePayload(JSON.parse(params.payload || "{}"));
+    }) : readState();
+    return output(data, params.callback);
+  } catch (error) {
+    const params = (event && event.parameter) || {};
+    return output({ ok: false, error: String((error && error.message) || error) }, params.callback);
   }
-  return json(data);
 }
 
 function doPost(event) {
-  const payload = JSON.parse((event.postData && event.postData.contents) || "{}");
+  try {
+    const payload = JSON.parse((event.postData && event.postData.contents) || "{}");
+    return json(withLock(function () {
+      return handlePayload(payload);
+    }));
+  } catch (error) {
+    return json({ ok: false, error: String((error && error.message) || error) });
+  }
+}
+
+function withLock(callback) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    if (payload.action === "replace") {
-      writeState(payload.people, payload.expenses);
-      return json(readState());
-    }
-    if (payload.action === "appendExpense") {
-      writePeople(payload.people);
-      appendExpense(payload.expense);
-      return json(readState());
-    }
-    if (payload.action === "updatePeople") {
-      writePeople(payload.people);
-      return json(readState());
-    }
-    if (payload.action === "deleteExpense") {
-      deleteExpense(payload.id);
-      return json(readState());
-    }
-    if (payload.action === "closeMonth") {
-      const current = readState();
-      closeMonth(current.expenses);
-      writePeople(payload.people || current.people);
-      writeExpenses([]);
-      return json(readState());
-    }
-    return json({ ok: false, error: "Unknown action" });
+    return callback();
   } finally {
     lock.releaseLock();
   }
+}
+
+function handlePayload(payload) {
+  if (payload.action === "replace") {
+    writeState(payload.people, payload.expenses);
+    return readState();
+  }
+  if (payload.action === "appendExpense") {
+    writePeople(payload.people);
+    appendExpense(payload.expense);
+    return readState();
+  }
+  if (payload.action === "updatePeople") {
+    writePeople(payload.people);
+    return readState();
+  }
+  if (payload.action === "deleteExpense") {
+    deleteExpense(payload.id);
+    return readState();
+  }
+  if (payload.action === "closeMonth") {
+    const current = readState();
+    closeMonth(current.expenses);
+    writePeople(payload.people || current.people);
+    writeExpenses([]);
+    return readState();
+  }
+  return { ok: false, error: "Unknown action" };
 }
 
 function readState() {
@@ -216,4 +234,11 @@ function asText(value) {
 
 function json(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function output(data, callback) {
+  if (callback) {
+    return ContentService.createTextOutput(callback + "(" + JSON.stringify(data) + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return json(data);
 }
