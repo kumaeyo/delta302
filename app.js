@@ -1,5 +1,6 @@
 (function () {
   const STORAGE_KEY = "house-split-state-v1";
+  const SYNC_INTERVAL_MS = 30000;
   const DEFAULT_PEOPLE = ["You", "Mate 1", "Mate 2"];
   const state = {
     people: DEFAULT_PEOPLE.slice(),
@@ -48,6 +49,7 @@
     if (state.apiUrl) {
       syncFromSheet();
     }
+    startAutoSync();
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("./sw.js").catch(function () {});
     }
@@ -67,7 +69,7 @@
     els.expenseList.addEventListener("click", deleteExpense);
   }
 
-  function addExpense(event) {
+  async function addExpense(event) {
     event.preventDefault();
     const item = els.itemInput.value.trim();
     const amount = parseAmount(els.amountInput.value);
@@ -75,7 +77,7 @@
       return;
     }
 
-    state.expenses.unshift({
+    const expense = {
       id: createId(),
       item,
       amount,
@@ -83,42 +85,41 @@
       participants: state.participants.slice().sort(),
       date: els.dateInput.value || today(),
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    state.expenses = mergeExpenses([expense].concat(state.expenses));
 
     els.itemInput.value = "";
     els.amountInput.value = "";
     els.itemInput.focus();
     persistAndRender();
-    saveToSheet();
+    await postThenSync(
+      { action: "appendExpense", people: state.people, expense: expense },
+      { expectedExpenseId: expense.id },
+    );
   }
 
-  function deleteExpense(event) {
+  async function deleteExpense(event) {
     const button = event.target.closest("[data-delete-id]");
     if (!button) return;
+    const expenseId = button.dataset.deleteId;
     state.expenses = state.expenses.filter(function (expense) {
-      return expense.id !== button.dataset.deleteId;
+      return expense.id !== expenseId;
     });
     persistAndRender();
-    saveToSheet();
+    await postThenSync({ action: "deleteExpense", id: expenseId });
   }
 
   async function closeMonth() {
     if (!state.expenses.length) return;
     const confirmed = window.confirm("Reset this month after everyone has paid?");
     if (!confirmed) return;
-    const currentExpenses = state.expenses.slice();
+    if (state.apiUrl) {
+      await postThenSync({ action: "closeMonth", people: state.people });
+      return;
+    }
     state.expenses = [];
     persistAndRender();
-    if (state.apiUrl) {
-      try {
-        await postSheet({ action: "closeMonth", expenses: currentExpenses, people: state.people });
-        setSyncStatus("Synced");
-      } catch (error) {
-        state.expenses = currentExpenses;
-        persistAndRender();
-        setSyncStatus("Sheet error");
-      }
-    }
   }
 
   function setSplitMode(event) {
@@ -181,18 +182,26 @@
     }
   }
 
-  function saveSettings() {
-    state.people = els.personInputs.map(function (input, index) {
+  async function saveSettings() {
+    const nextPeople = els.personInputs.map(function (input, index) {
       return input.value.trim() || DEFAULT_PEOPLE[index];
     });
-    state.apiUrl = els.apiUrlInput.value.trim();
+    const nextApiUrl = els.apiUrlInput.value.trim();
+    const apiChanged = nextApiUrl !== state.apiUrl;
+    state.people = nextPeople;
+    state.apiUrl = nextApiUrl;
     state.paidBy = Math.min(state.paidBy, 2);
     if (state.splitCount === 3) {
       state.participants = [0, 1, 2];
     }
     persistAndRender();
     closeSettings();
-    saveToSheet();
+    if (!state.apiUrl) return;
+    if (apiChanged) {
+      await syncFromSheet();
+      return;
+    }
+    await postThenSync({ action: "updatePeople", people: state.people });
   }
 
   function clearApiUrl() {
@@ -458,36 +467,46 @@
     if (!state.apiUrl || state.isSyncing) return;
     state.isSyncing = true;
     setSyncStatus("Syncing");
+    let status = "Synced";
     try {
       const result = await getSheet();
-      if (Array.isArray(result.people) && result.people.length === 3) {
-        state.people = result.people;
-      }
-      if (Array.isArray(result.expenses)) {
-        state.expenses = normalizeExpenses(result.expenses);
-      }
-      saveLocal();
-      render();
-      setSyncStatus("Synced");
+      applySheetState(result);
     } catch (error) {
-      setSyncStatus("Sheet error");
+      status = "Sheet error";
     } finally {
       state.isSyncing = false;
+      setSyncStatus(status);
     }
   }
 
-  async function saveToSheet() {
-    if (!state.apiUrl || state.isSyncing) return;
+  async function postThenSync(payload, options) {
+    if (!state.apiUrl || state.isSyncing) return false;
     state.isSyncing = true;
     setSyncStatus("Syncing");
+    let status = "Synced";
+    let ok = true;
     try {
-      await postSheet({ action: "replace", people: state.people, expenses: state.expenses });
-      setSyncStatus("Synced");
+      await postSheet(payload);
+      await delay(350);
+      const result = await getSheet();
+      applySheetState(result);
+      if (
+        options &&
+        options.expectedExpenseId &&
+        !state.expenses.some(function (expense) {
+          return expense.id === options.expectedExpenseId;
+        })
+      ) {
+        throw new Error("Expense was not saved to Sheet");
+      }
     } catch (error) {
-      setSyncStatus("Sheet error");
+      status = "Sheet error";
+      ok = false;
     } finally {
       state.isSyncing = false;
+      setSyncStatus(status);
     }
+    return ok;
   }
 
   async function getSheet() {
@@ -553,8 +572,38 @@
     els.syncButton.disabled = state.isSyncing || !state.apiUrl;
   }
 
+  function startAutoSync() {
+    window.setInterval(function () {
+      if (state.apiUrl && !document.hidden) {
+        syncFromSheet();
+      }
+    }, SYNC_INTERVAL_MS);
+    document.addEventListener("visibilitychange", function () {
+      if (state.apiUrl && !document.hidden) {
+        syncFromSheet();
+      }
+    });
+    window.addEventListener("focus", function () {
+      if (state.apiUrl) {
+        syncFromSheet();
+      }
+    });
+  }
+
+  function applySheetState(result) {
+    if (Array.isArray(result.people) && result.people.length === 3) {
+      state.people = result.people;
+    }
+    if (Array.isArray(result.expenses)) {
+      state.expenses = normalizeExpenses(result.expenses);
+    }
+    saveLocal();
+    render();
+  }
+
   function normalizeExpenses(expenses) {
-    return expenses
+    return mergeExpenses(
+      expenses
       .map(function (expense) {
         return {
           id: String(expense.id || Date.now()),
@@ -570,7 +619,8 @@
       })
       .filter(function (expense) {
         return expense.amount > 0 && expense.participants.length;
-      });
+      }),
+    );
   }
 
   function formatAmountInput() {
@@ -610,8 +660,27 @@
     return url + (url.includes("?") ? "&" : "?") + query;
   }
 
+  function mergeExpenses(expenses) {
+    const seen = new Set();
+    return expenses
+      .filter(function (expense) {
+        if (seen.has(expense.id)) return false;
+        seen.add(expense.id);
+        return true;
+      })
+      .sort(function (a, b) {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }
+
+  function delay(ms) {
+    return new Promise(function (resolve) {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
   function personIcon(index) {
-    const icons = ["🦆", "🐧", "🦭"];
+    const icons = ["🐙", "🐧", "🐹"];
     return '<span class="mate-avatar avatar-' + index + '" aria-hidden="true">' + icons[index] + "</span>";
   }
 

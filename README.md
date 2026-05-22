@@ -34,6 +34,14 @@ Only the first five files are required for the app screen. Keep `google-apps-scr
 5. Open the deployed web app URL once so Google can authorize it.
 6. Paste the deployed URL into **Settings > Google Sheet app URL** inside Delta 302.
 
+Use the same deployed web app URL on every phone. The Google Sheet is the shared backend:
+
+- `People` stores the three shared person names.
+- `Expenses` stores the active shared spending records.
+- `Archive` stores closed months after **Reset**.
+
+When one phone adds spending, the app appends that record to the Sheet. Other phones will see it after opening the app, refreshing, or tapping **Sync**. If person names are edited, tap **Save** in settings, then tap **Sync** on the other phones.
+
 The script creates three tabs in the Sheet:
 
 - `People`
