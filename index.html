@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#00b14f" />
+    <title>Delta 302</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="profile-cluster">
+          <div class="profile-avatar" aria-hidden="true">🐱</div>
+          <div>
+            <h1>Delta 302</h1>
+            <p class="eyebrow">Cycle: <span id="cycleLabel">This month</span></p>
+          </div>
+        </div>
+        <button class="icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 0 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7A2 2 0 0 1 7.1 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 0 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 0 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z" />
+          </svg>
+        </button>
+      </header>
+
+      <section class="hero">
+        <div>
+          <span class="muted">Total shared</span>
+          <strong id="totalShared">Rp0</strong>
+          <small>Active spending this month</small>
+        </div>
+        <button class="ghost-button" id="closeMonthButton" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M3 12a9 9 0 0 1 15.3-6.4" />
+            <path d="M18 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-15.3 6.4" />
+            <path d="M6 21v-5h5" />
+          </svg>
+          Reset
+        </button>
+      </section>
+
+      <section class="panel input-panel" id="record">
+        <div class="section-heading">
+          <h2>Record Spending</h2>
+          <span>Quick add</span>
+        </div>
+        <form id="expenseForm" autocomplete="off">
+          <div class="field-group two-col">
+            <label>
+              <span>Item</span>
+              <input id="itemInput" name="item" type="text" inputmode="text" placeholder="Groceries" required />
+            </label>
+            <label>
+              <span>Price</span>
+              <input id="amountInput" name="amount" type="text" inputmode="numeric" placeholder="Rp 10.000" required />
+            </label>
+          </div>
+
+          <label class="date-field">
+            <span>Date</span>
+            <input id="dateInput" name="date" type="date" required />
+          </label>
+
+          <div class="control-block">
+            <span class="label-text">Paid by</span>
+            <div class="segmented" id="paidByGroup"></div>
+          </div>
+
+          <div class="control-block">
+            <span class="label-text">Split</span>
+            <div class="segmented compact" id="splitModeGroup">
+              <button type="button" class="segment active" data-split="3">3 people</button>
+              <button type="button" class="segment" data-split="2">2 people</button>
+            </div>
+          </div>
+
+          <div class="control-block">
+            <span class="label-text">People included</span>
+            <div class="chip-grid" id="participantsGroup"></div>
+          </div>
+
+          <button class="primary-button" type="submit">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+            Add spending
+          </button>
+        </form>
+      </section>
+
+      <section class="panel balance-panel" id="summary">
+        <div class="section-heading">
+          <h2>Roommates</h2>
+          <span>Balances</span>
+        </div>
+        <div class="summary-grid" id="personSummary"></div>
+      </section>
+
+      <section class="panel settlement-panel">
+        <div class="section-heading">
+          <h2>Settlement</h2>
+          <span id="syncStatus">Local</span>
+        </div>
+        <div class="settlement-list" id="settlementList"></div>
+      </section>
+
+      <section class="panel history-panel" id="history">
+        <div class="section-heading">
+          <h2>Recent</h2>
+          <button class="text-button" id="syncButton" type="button">Sync</button>
+        </div>
+        <div class="expense-list" id="expenseList"></div>
+      </section>
+    </main>
+
+    <dialog class="settings-dialog" id="settingsDialog">
+      <form method="dialog" class="settings-panel">
+        <div class="section-heading">
+          <h2>Settings</h2>
+          <button class="icon-button dark" value="close" aria-label="Close" title="Close">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="settings-stack">
+          <label>
+            <span>Person 1</span>
+            <input id="person0Input" type="text" maxlength="18" />
+          </label>
+          <label>
+            <span>Person 2</span>
+            <input id="person1Input" type="text" maxlength="18" />
+          </label>
+          <label>
+            <span>Person 3</span>
+            <input id="person2Input" type="text" maxlength="18" />
+          </label>
+          <label>
+            <span>Google Sheet app URL</span>
+            <input id="apiUrlInput" type="url" inputmode="url" placeholder="https://script.google.com/..." />
+          </label>
+        </div>
+
+        <menu>
+          <button class="secondary-button" id="clearApiButton" type="button">Use local</button>
+          <button class="primary-button" id="saveSettingsButton" type="button">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <template id="emptyStateTemplate">
+      <div class="empty-state">No spending yet</div>
+    </template>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

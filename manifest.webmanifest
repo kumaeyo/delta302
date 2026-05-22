@@ -1,0 +1,9 @@
+{
+  "name": "Delta 302",
+  "short_name": "Delta302",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7fff9",
+  "theme_color": "#00b14f",
+  "description": "A tiny shared spending tracker for Delta 302."
+}
