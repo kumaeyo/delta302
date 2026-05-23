@@ -1,6 +1,6 @@
 # Delta 302
 
-A small mobile-first spending tracker for three housemates. It records an item, price, payer, and whether the cost is split by two or three people, then calculates each person's share and the settlement payments for the month.
+A small mobile-first spending tracker for three housemates. It records an item, price, payer, and whether the cost is split by three, two, or not split at all, then calculates each person's share and the settlement payments for the month.
 
 ## Open The App
 
@@ -32,9 +32,10 @@ Only the first five files are required for the app screen. Keep `google-apps-scr
    - **Execute as:** Me
    - **Who has access:** Anyone with the link
 5. Open the deployed web app URL once so Google can authorize it.
-6. Paste the deployed URL into **Settings > Google Sheet app URL** inside Delta 302.
+6. The app currently uses this deployed URL by default:
+   `https://script.google.com/macros/s/AKfycbxLiAUNhnRIkva76JyIS30-05_Dob9_H_dkxTIAGm2_GKzNq0HloFObXqsmadRVajcemA/exec`
 
-Use the same deployed web app URL on every phone. The Google Sheet is the shared backend:
+Use the same GitHub Pages app on every phone. The Google Sheet is the shared backend:
 
 - `People` stores the three shared person names.
 - `Expenses` stores the active shared spending records.
@@ -47,10 +48,11 @@ When one phone adds spending, the app appends that record to the Sheet. Other ph
 Check these in order:
 
 1. The URL in app settings must be the deployed Apps Script **Web app** URL ending in `/exec`, not the Apps Script editor URL and not a `/dev` URL.
-2. After editing `google-apps-script.gs`, deploy a **New version** in Apps Script. Saving the script is not enough.
-3. Open the `/exec` URL in a browser. It should show JSON that starts with `{"ok":true`.
-4. Push the newest `app.js` and `sw.js` to GitHub Pages, then fully close and reopen the app on each phone.
-5. If the home-screen app still uses old files, remove the home-screen icon and add it again from the GitHub Pages URL.
+2. This app has the `/exec` URL hardcoded in `app.js`. Make sure that exact Apps Script deployment uses the newest backend code.
+3. After editing `google-apps-script.gs`, deploy a **New version** in Apps Script. Saving the script is not enough.
+4. Open the `/exec` URL in a browser. It should show JSON that starts with `{"ok":true`.
+5. Push the newest `app.js` and `sw.js` to GitHub Pages, then fully close and reopen the app on each phone.
+6. If the home-screen app still uses old files, remove the home-screen icon and add it again from the GitHub Pages URL.
 
 The script creates three tabs in the Sheet:
 
@@ -70,6 +72,8 @@ Each expense stores:
 - `participants`
 - `date`
 - `createdAt`
+
+For no-split records, `participants` contains one person. If that person is the payer, it records their own expense with no debt. If that person is someone else, it records that the payer paid fully for that person.
 
 Balances are calculated as:
 

@@ -1,11 +1,13 @@
 (function () {
   const STORAGE_KEY = "house-split-state-v1";
   const SYNC_INTERVAL_MS = 30000;
+  const DEFAULT_API_URL =
+    "https://script.google.com/macros/s/AKfycbxLiAUNhnRIkva76JyIS30-05_Dob9_H_dkxTIAGm2_GKzNq0HloFObXqsmadRVajcemA/exec";
   const DEFAULT_PEOPLE = ["You", "Mate 1", "Mate 2"];
   const state = {
     people: DEFAULT_PEOPLE.slice(),
     expenses: [],
-    apiUrl: "",
+    apiUrl: DEFAULT_API_URL,
     splitCount: 3,
     paidBy: 0,
     participants: [0, 1, 2],
@@ -30,8 +32,6 @@
     closeMonthButton: document.getElementById("closeMonthButton"),
     settingsButton: document.getElementById("settingsButton"),
     settingsDialog: document.getElementById("settingsDialog"),
-    apiUrlInput: document.getElementById("apiUrlInput"),
-    clearApiButton: document.getElementById("clearApiButton"),
     saveSettingsButton: document.getElementById("saveSettingsButton"),
     personInputs: [
       document.getElementById("person0Input"),
@@ -64,7 +64,6 @@
     els.syncButton.addEventListener("click", syncFromSheet);
     els.closeMonthButton.addEventListener("click", closeMonth);
     els.settingsButton.addEventListener("click", openSettings);
-    els.clearApiButton.addEventListener("click", clearApiUrl);
     els.saveSettingsButton.addEventListener("click", saveSettings);
     els.expenseList.addEventListener("click", deleteExpense);
   }
@@ -128,7 +127,7 @@
     state.splitCount = Number(button.dataset.split);
     if (state.splitCount === 3) {
       state.participants = [0, 1, 2];
-    } else {
+    } else if (state.splitCount === 2) {
       const preferred = state.participants.filter(function (index) {
         return index !== state.paidBy;
       });
@@ -138,6 +137,8 @@
             return index !== state.paidBy;
           });
       state.participants = [state.paidBy, nextPerson];
+    } else {
+      state.participants = [state.paidBy];
     }
     renderControls();
   }
@@ -155,6 +156,8 @@
           return index !== state.paidBy;
         });
       state.participants = [state.paidBy, otherPerson];
+    } else if (state.splitCount === 1) {
+      state.participants = [state.paidBy];
     }
     renderControls();
   }
@@ -163,9 +166,12 @@
     const button = event.target.closest("[data-participant]");
     if (!button || state.splitCount === 3) return;
     const personIndex = Number(button.dataset.participant);
-    if (personIndex === state.paidBy) {
+    if (state.splitCount === 1) {
+      state.participants = [personIndex];
+      renderControls();
       return;
     }
+    if (personIndex === state.paidBy) return;
     state.participants = [state.paidBy, personIndex];
     renderControls();
   }
@@ -174,7 +180,6 @@
     els.personInputs.forEach(function (input, index) {
       input.value = state.people[index] || DEFAULT_PEOPLE[index];
     });
-    els.apiUrlInput.value = state.apiUrl;
     if (typeof els.settingsDialog.showModal === "function") {
       els.settingsDialog.showModal();
     } else {
@@ -186,28 +191,17 @@
     const nextPeople = els.personInputs.map(function (input, index) {
       return input.value.trim() || DEFAULT_PEOPLE[index];
     });
-    const nextApiUrl = els.apiUrlInput.value.trim();
-    const apiChanged = nextApiUrl !== state.apiUrl;
     state.people = nextPeople;
-    state.apiUrl = nextApiUrl;
+    state.apiUrl = DEFAULT_API_URL;
     state.paidBy = Math.min(state.paidBy, 2);
     if (state.splitCount === 3) {
       state.participants = [0, 1, 2];
+    } else if (state.splitCount === 1) {
+      state.participants = [state.paidBy];
     }
     persistAndRender();
     closeSettings();
-    if (!state.apiUrl) return;
-    if (apiChanged) {
-      await syncFromSheet();
-      return;
-    }
     await postThenSync({ action: "updatePeople", people: state.people });
-  }
-
-  function clearApiUrl() {
-    state.apiUrl = "";
-    els.apiUrlInput.value = "";
-    persistAndRender();
   }
 
   function closeSettings() {
@@ -257,7 +251,7 @@
           '" data-participant="' +
           index +
           '" ' +
-          (state.splitCount === 3 || index === state.paidBy ? "disabled" : "") +
+          (state.splitCount === 3 || (state.splitCount === 2 && index === state.paidBy) ? "disabled" : "") +
           ">" +
           personIcon(index) +
           '<span class="chip-label">' +
@@ -445,10 +439,11 @@
       if (!saved) return;
       state.people = Array.isArray(saved.people) && saved.people.length === 3 ? saved.people : DEFAULT_PEOPLE.slice();
       state.expenses = Array.isArray(saved.expenses) ? normalizeExpenses(saved.expenses) : [];
-      state.apiUrl = saved.apiUrl || "";
+      state.apiUrl = DEFAULT_API_URL;
     } catch (error) {
       state.people = DEFAULT_PEOPLE.slice();
       state.expenses = [];
+      state.apiUrl = DEFAULT_API_URL;
     }
   }
 
@@ -458,7 +453,7 @@
       JSON.stringify({
         people: state.people,
         expenses: state.expenses,
-        apiUrl: state.apiUrl,
+        apiUrl: DEFAULT_API_URL,
       }),
     );
   }

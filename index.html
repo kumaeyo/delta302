@@ -78,6 +78,7 @@
             <div class="segmented compact" id="splitModeGroup">
               <button type="button" class="segment active" data-split="3">3 people</button>
               <button type="button" class="segment" data-split="2">2 people</button>
+              <button type="button" class="segment" data-split="1">No split</button>
             </div>
           </div>
 
@@ -146,14 +147,9 @@
             <span>Person 3</span>
             <input id="person2Input" type="text" maxlength="18" />
           </label>
-          <label>
-            <span>Google Sheet app URL</span>
-            <input id="apiUrlInput" type="url" inputmode="url" placeholder="https://script.google.com/..." />
-          </label>
         </div>
 
         <menu>
-          <button class="secondary-button" id="clearApiButton" type="button">Use local</button>
           <button class="primary-button" id="saveSettingsButton" type="button">Save</button>
         </menu>
       </form>

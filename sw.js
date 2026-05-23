@@ -1,4 +1,4 @@
-const CACHE_NAME = "house-split-v12";
+const CACHE_NAME = "house-split-v13";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", function (event) {
