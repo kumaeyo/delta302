@@ -71,7 +71,7 @@ function handlePayload(payload) {
     return readState();
   }
   if (payload.action === "markSettlementPaid") {
-    markSettlementPaid(payload.settlementId);
+    markSettlementPaid(payload.settlementId, payload.paidAt);
     return readState();
   }
   if (payload.action === "closeCycle" || payload.action === "closeMonth") {
@@ -93,7 +93,7 @@ function readState() {
   const expenses = readExpenses(expensesSheet);
   const archive = readArchive(archiveSheet);
   const currentCycle = validCycle(settings.currentCycle) ? settings.currentCycle : currentCycleId();
-  const paidSettlements = parseStringList(settings.paidSettlements);
+  const paidSettlements = parsePaidSettlements(settings.paidSettlements);
   const cycles = readCycles(cyclesSheet, archive, people);
 
   if (!validCycle(settings.currentCycle)) {
@@ -180,10 +180,17 @@ function deleteExpense(id) {
   writeExpenses(remaining);
 }
 
-function markSettlementPaid(settlementId) {
+function markSettlementPaid(settlementId, paidAt) {
   if (!settlementId) return;
   const current = readState();
-  const nextPaidSettlements = uniqueStrings([String(settlementId)].concat(current.paidSettlements || []));
+  const nextPaidSettlements = mergePaidSettlements(
+    [
+      {
+        id: String(settlementId),
+        paidAt: paidAt || new Date().toISOString(),
+      },
+    ].concat(current.paidSettlements || [])
+  );
   writeSetting("paidSettlements", JSON.stringify(nextPaidSettlements));
 }
 
@@ -194,8 +201,10 @@ function closeActiveCycle(payload) {
     return { ok: false, error: "Cycle changed. Sync first." };
   }
   const settlements = calculateSettlements(current.expenses, current.people, current.currentCycle);
+  const payloadPaidSettlements = Array.isArray(payload.paidSettlements) ? payload.paidSettlements : [];
+  const paidSettlements = mergePaidSettlements(payloadPaidSettlements.concat(current.paidSettlements || []));
   const missingSettlements = settlements.filter(function (settlement) {
-    return current.paidSettlements.indexOf(settlement.id) === -1;
+    return !isSettlementPaid(paidSettlements, settlement.id);
   });
   if (missingSettlements.length) {
     return { ok: false, error: "Mark every settlement as paid first." };
@@ -454,23 +463,43 @@ function parsePeople(value, fallback) {
   }
 }
 
-function parseStringList(value) {
+function parsePaidSettlements(value) {
   try {
     const items = JSON.parse(String(value || "[]"));
-    return Array.isArray(items) ? uniqueStrings(items) : [];
+    return normalizePaidSettlements(items);
   } catch (error) {
     return [];
   }
 }
 
-function uniqueStrings(values) {
-  return (values || [])
-    .map(function (value) {
-      return String(value || "");
-    })
-    .filter(function (value, index, array) {
-      return value && array.indexOf(value) === index;
-    });
+function normalizePaidSettlements(values) {
+  const seen = {};
+  const records = [];
+  (Array.isArray(values) ? values : []).forEach(function (value) {
+    let record;
+    if (value && typeof value === "object") {
+      record = {
+        id: String(value.id || ""),
+        paidAt: String(value.paidAt || ""),
+      };
+    } else {
+      record = { id: String(value || ""), paidAt: "" };
+    }
+    if (!record.id || seen[record.id]) return;
+    seen[record.id] = true;
+    records.push(record);
+  });
+  return records;
+}
+
+function mergePaidSettlements(values) {
+  return normalizePaidSettlements(values);
+}
+
+function isSettlementPaid(records, id) {
+  return records.some(function (record) {
+    return record.id === id;
+  });
 }
 
 function ensureSheet(spreadsheet, name, headers) {
