@@ -131,13 +131,20 @@
     const button = event.target.closest("[data-pay-settlement]");
     if (!button) return;
     const settlementId = button.dataset.paySettlement;
-    if (!settlementId || state.paidSettlements.includes(settlementId)) return;
-    state.paidSettlements = uniqueStrings([settlementId].concat(state.paidSettlements));
+    if (!settlementId || isSettlementPaid(settlementId)) return;
+    const paidAt = new Date().toISOString();
+    state.paidSettlements = mergePaidSettlements([{ id: settlementId, paidAt: paidAt }].concat(state.paidSettlements));
     persistAndRender();
-    await postThenSync({ action: "markSettlementPaid", cycle: state.currentCycle, settlementId: settlementId });
+    await postThenSync({
+      action: "markSettlementPaid",
+      cycle: state.currentCycle,
+      settlementId: settlementId,
+      paidAt: paidAt,
+    });
   }
 
   async function closeCycle() {
+    if (state.isSyncing) return;
     if (!canCloseCycle()) return;
     const cycle = state.currentCycle || currentCycleId();
     const nextCycle = nextCycleId(cycle);
@@ -153,7 +160,12 @@
     if (!confirmed) return;
 
     if (state.apiUrl) {
-      await postThenSync({ action: "closeCycle", people: state.people, cycle: cycle });
+      await postThenSync({
+        action: "closeCycle",
+        people: state.people,
+        cycle: cycle,
+        paidSettlements: state.paidSettlements,
+      });
       return;
     }
 
@@ -264,7 +276,7 @@
     renderControls();
     renderSummary();
     renderSettlements();
-    renderActiveExpenses();
+    renderTransactions();
     renderCycleTrend();
     renderCycleList();
     renderSettings();
@@ -382,7 +394,7 @@
     els.settlementList.innerHTML = settlements
       .map(function (settlement) {
         const id = settlementId(settlement);
-        const paid = state.paidSettlements.includes(id);
+        const paid = isSettlementPaid(id);
         return (
           '<div class="settlement-item">' +
           '<div class="row-icon row-icon-transfer" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h11"/><path d="m15 4 3 3-3 3"/><path d="M17 17H6"/><path d="m9 14-3 3 3 3"/></svg></div>' +
@@ -405,7 +417,11 @@
 
   function renderSettlementFooter(settlements) {
     const canClose = canCloseCycle(settlements);
-    els.closeCycleButton.disabled = !canClose;
+    els.closeCycleButton.disabled = state.isSyncing || !canClose;
+    if (state.isSyncing) {
+      els.settlementHelper.textContent = "Saving changes. Close cycle will be ready after sync.";
+      return;
+    }
     if (!settlements.length) {
       els.settlementHelper.textContent = "All square. You can close this cycle now.";
       return;
@@ -415,10 +431,36 @@
       : "Mark every settlement as paid before closing this cycle.";
   }
 
-  function renderActiveExpenses() {
-    renderExpenseList(els.expenseList, state.expenses, {
-      emptyText: "No spending in this cycle yet",
+  function renderTransactions() {
+    renderExpenseList(els.expenseList, currentTransactions(), {
+      emptyText: "No transactions in this cycle yet",
       canDelete: true,
+    });
+  }
+
+  function currentTransactions() {
+    const expenseTransactions = state.expenses.map(function (expense) {
+      return Object.assign({ type: "expense" }, expense);
+    });
+    const paidTransactions = calculateSettlements(state.expenses)
+      .map(function (settlement) {
+        const id = settlementId(settlement);
+        const record = paidSettlementRecord(id);
+        if (!record) return null;
+        return {
+          type: "settlement",
+          id: "paid-" + id,
+          item: settlement.from + " paid " + settlement.to,
+          amount: settlement.amount,
+          paidAt: record.paidAt,
+          date: record.paidAt || today(),
+          createdAt: record.paidAt || "",
+        };
+      })
+      .filter(Boolean);
+
+    return expenseTransactions.concat(paidTransactions).sort(function (a, b) {
+      return transactionTime(b) - transactionTime(a);
     });
   }
 
@@ -520,6 +562,24 @@
     }
     return expenses
       .map(function (expense) {
+        if (expense.type === "settlement") {
+          return (
+            '<article class="expense-item">' +
+            '<div class="row-icon row-icon-payment" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 10h.01"/><path d="M17 14h.01"/><circle cx="12" cy="12" r="2.5"/></svg></div>' +
+            '<div class="expense-main">' +
+            '<div class="expense-title"><strong>' +
+            escapeHtml(expense.item) +
+            "</strong><span>" +
+            money(expense.amount) +
+            "</span></div>" +
+            '<div class="expense-meta">' +
+            escapeHtml(readableDateTime(expense.paidAt)) +
+            " - Settlement paid" +
+            "</div>" +
+            "</div>" +
+            "</article>"
+          );
+        }
         const participants = expense.participants
           .map(function (index) {
             return state.people[index];
@@ -642,7 +702,7 @@
   function canCloseCycle(settlements) {
     const currentSettlements = Array.isArray(settlements) ? settlements : calculateSettlements(state.expenses);
     return currentSettlements.every(function (settlement) {
-      return state.paidSettlements.includes(settlementId(settlement));
+      return isSettlementPaid(settlementId(settlement));
     });
   }
 
@@ -706,7 +766,7 @@
       state.expenses = Array.isArray(saved.expenses) ? normalizeExpenses(saved.expenses) : [];
       state.archive = Array.isArray(saved.archive) ? normalizeArchive(saved.archive) : [];
       state.cycles = Array.isArray(saved.cycles) ? normalizeCycles(saved.cycles) : [];
-      state.paidSettlements = Array.isArray(saved.paidSettlements) ? uniqueStrings(saved.paidSettlements) : [];
+      state.paidSettlements = normalizePaidSettlements(saved.paidSettlements);
       state.currentCycle = validCycle(saved.currentCycle) ? saved.currentCycle : currentCycleId();
       state.apiUrl = DEFAULT_API_URL;
     } catch (error) {
@@ -748,6 +808,7 @@
     } finally {
       state.isSyncing = false;
       setSyncStatus(status);
+      renderSettlementFooter(calculateSettlements(state.expenses));
     }
   }
 
@@ -780,6 +841,7 @@
     } finally {
       state.isSyncing = false;
       setSyncStatus(status);
+      renderSettlementFooter(calculateSettlements(state.expenses));
     }
     return ok;
   }
@@ -841,6 +903,9 @@
   function setSyncStatus(text) {
     els.syncStatus.textContent = text;
     els.syncButton.disabled = state.isSyncing || !state.apiUrl;
+    if (els.closeCycleButton && els.settlementHelper) {
+      renderSettlementFooter(calculateSettlements(state.expenses));
+    }
   }
 
   function startAutoSync() {
@@ -878,7 +943,7 @@
       state.cycles = normalizeCycles(result.cycles);
     }
     if (Array.isArray(result.paidSettlements)) {
-      state.paidSettlements = uniqueStrings(result.paidSettlements);
+      state.paidSettlements = normalizePaidSettlements(result.paidSettlements);
     }
     if (validCycle(result.currentCycle)) {
       state.currentCycle = result.currentCycle;
@@ -944,6 +1009,25 @@
           return validCycle(cycle.cycle);
         }),
     );
+  }
+
+  function normalizePaidSettlements(values) {
+    const seen = new Set();
+    return (Array.isArray(values) ? values : [])
+      .map(function (value) {
+        if (value && typeof value === "object") {
+          return {
+            id: String(value.id || ""),
+            paidAt: String(value.paidAt || ""),
+          };
+        }
+        return { id: String(value || ""), paidAt: "" };
+      })
+      .filter(function (record) {
+        if (!record.id || seen.has(record.id)) return false;
+        seen.add(record.id);
+        return true;
+      });
   }
 
   function formatAmountInput() {
@@ -1026,6 +1110,25 @@
     return new Intl.DateTimeFormat("en", { day: "2-digit", month: "short" }).format(new Date(value));
   }
 
+  function readableDateTime(value) {
+    if (!value) return "Paid";
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "Paid";
+    return (
+      "Paid " +
+      new Intl.DateTimeFormat("en", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date)
+    );
+  }
+
+  function transactionTime(transaction) {
+    return new Date(transaction.createdAt || transaction.paidAt || transaction.date || 0).getTime() || 0;
+  }
+
   function withQuery(url, query) {
     return url + (url.includes("?") ? "&" : "?") + query;
   }
@@ -1077,6 +1180,20 @@
       });
   }
 
+  function mergePaidSettlements(records) {
+    return normalizePaidSettlements(records);
+  }
+
+  function isSettlementPaid(id) {
+    return Boolean(paidSettlementRecord(id));
+  }
+
+  function paidSettlementRecord(id) {
+    return state.paidSettlements.find(function (record) {
+      return record.id === id;
+    });
+  }
+
   function delay(ms) {
     return new Promise(function (resolve) {
       window.setTimeout(resolve, ms);
@@ -1108,16 +1225,6 @@
 
   function unique(value, index, array) {
     return array.indexOf(value) === index;
-  }
-
-  function uniqueStrings(values) {
-    return (values || [])
-      .map(function (value) {
-        return String(value || "");
-      })
-      .filter(function (value, index, array) {
-        return value && array.indexOf(value) === index;
-      });
   }
 
   function escapeHtml(value) {

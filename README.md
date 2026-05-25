@@ -39,7 +39,7 @@ Use the same GitHub Pages app on every phone. The Google Sheet is the shared bac
 
 - `People` stores the three shared person names.
 - `Expenses` stores the active shared spending records.
-- `Settings` stores the active cycle name and paid settlement markers, so every phone shares the same cycle status.
+- `Settings` stores the active cycle name and paid settlement markers with paid time, so every phone shares the same cycle status.
 - `Cycles` stores each closed cycle summary.
 - `Archive` stores closed cycle spending after **Close cycle**.
 
@@ -64,7 +64,7 @@ The script creates five tabs in the Sheet:
 - `Settings`
 - `Cycles`
 
-Mark each settlement row as **Paid** first. When every settlement is paid, **Close cycle** becomes available. Tapping it moves current expenses into `Archive`, saves a summary in `Cycles`, clears the paid settlement markers, and moves the active cycle to the next month name. The transaction dates can be from any month; the cycle name is controlled separately.
+Mark each settlement row as **Paid** first. The paid date appears in **Transaction List**. When every settlement is paid, **Close cycle** becomes available. Tapping it moves current expenses into `Archive`, saves a summary in `Cycles`, clears the paid settlement markers, and moves the active cycle to the next month name. The transaction dates can be from any month; the cycle name is controlled separately.
 
 ## Data Model
 
