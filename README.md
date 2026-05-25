@@ -33,7 +33,7 @@ Only the first five files are required for the app screen. Keep `google-apps-scr
    - **Who has access:** Anyone with the link
 5. Open the deployed web app URL once so Google can authorize it.
 6. The app currently uses this deployed URL by default:
-   `https://script.google.com/macros/s/AKfycbxLiAUNhnRIkva76JyIS30-05_Dob9_H_dkxTIAGm2_GKzNq0HloFObXqsmadRVajcemA/exec`
+   `https://script.google.com/macros/s/AKfycbw1AbCSDKJCnnPF4hMZXjJxE3Fq9_1onlR_TNEeeW5WLrcuBAcsGcUufrNlug-hLSi-7g/exec`
 
 Use the same GitHub Pages app on every phone. The Google Sheet is the shared backend:
 

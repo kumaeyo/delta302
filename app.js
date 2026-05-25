@@ -2,7 +2,7 @@
   const STORAGE_KEY = "house-split-state-v1";
   const SYNC_INTERVAL_MS = 30000;
   const DEFAULT_API_URL =
-    "https://script.google.com/macros/s/AKfycbxLiAUNhnRIkva76JyIS30-05_Dob9_H_dkxTIAGm2_GKzNq0HloFObXqsmadRVajcemA/exec";
+    "https://script.google.com/macros/s/AKfycbw1AbCSDKJCnnPF4hMZXjJxE3Fq9_1onlR_TNEeeW5WLrcuBAcsGcUufrNlug-hLSi-7g/exec";
   const DEFAULT_PEOPLE = ["You", "Mate 1", "Mate 2"];
   const VIEW_NAMES = ["add", "history", "settings"];
 
