@@ -4,19 +4,27 @@
   const DEFAULT_API_URL =
     "https://script.google.com/macros/s/AKfycbxLiAUNhnRIkva76JyIS30-05_Dob9_H_dkxTIAGm2_GKzNq0HloFObXqsmadRVajcemA/exec";
   const DEFAULT_PEOPLE = ["You", "Mate 1", "Mate 2"];
+  const VIEW_NAMES = ["add", "history", "settings"];
+
   const state = {
     people: DEFAULT_PEOPLE.slice(),
     expenses: [],
+    archive: [],
+    cycles: [],
+    paidSettlements: [],
+    currentCycle: currentCycleId(),
     apiUrl: DEFAULT_API_URL,
     splitCount: 3,
     paidBy: 0,
     participants: [0, 1, 2],
     isSyncing: false,
+    view: "add",
   };
 
   const els = {
-    cycleLabel: document.getElementById("cycleLabel"),
     totalShared: document.getElementById("totalShared"),
+    activeCycleText: document.getElementById("activeCycleText"),
+    historyCycleLabel: document.getElementById("historyCycleLabel"),
     expenseForm: document.getElementById("expenseForm"),
     itemInput: document.getElementById("itemInput"),
     amountInput: document.getElementById("amountInput"),
@@ -26,12 +34,15 @@
     participantsGroup: document.getElementById("participantsGroup"),
     personSummary: document.getElementById("personSummary"),
     settlementList: document.getElementById("settlementList"),
+    settlementHelper: document.getElementById("settlementHelper"),
     expenseList: document.getElementById("expenseList"),
+    cycleTrend: document.getElementById("cycleTrend"),
+    cycleList: document.getElementById("cycleList"),
     syncStatus: document.getElementById("syncStatus"),
     syncButton: document.getElementById("syncButton"),
-    closeMonthButton: document.getElementById("closeMonthButton"),
-    settingsButton: document.getElementById("settingsButton"),
-    settingsDialog: document.getElementById("settingsDialog"),
+    closeCycleButton: document.getElementById("closeCycleButton"),
+    appNav: document.getElementById("appNav"),
+    settingsForm: document.getElementById("settingsForm"),
     saveSettingsButton: document.getElementById("saveSettingsButton"),
     personInputs: [
       document.getElementById("person0Input"),
@@ -43,6 +54,10 @@
 
   function init() {
     loadLocal();
+    state.view = "add";
+    if (location.hash) {
+      history.replaceState(null, "", location.pathname + location.search);
+    }
     els.dateInput.value = today();
     bindEvents();
     render();
@@ -62,10 +77,11 @@
     els.paidByGroup.addEventListener("click", setPaidBy);
     els.participantsGroup.addEventListener("click", toggleParticipant);
     els.syncButton.addEventListener("click", syncFromSheet);
-    els.closeMonthButton.addEventListener("click", closeMonth);
-    els.settingsButton.addEventListener("click", openSettings);
-    els.saveSettingsButton.addEventListener("click", saveSettings);
+    els.closeCycleButton.addEventListener("click", closeCycle);
+    els.settlementList.addEventListener("click", markSettlementPaid);
+    els.settingsForm.addEventListener("submit", saveSettings);
     els.expenseList.addEventListener("click", deleteExpense);
+    els.appNav.addEventListener("click", handleNavClick);
   }
 
   async function addExpense(event) {
@@ -87,6 +103,7 @@
     };
 
     state.expenses = mergeExpenses([expense].concat(state.expenses));
+    state.paidSettlements = [];
 
     els.itemInput.value = "";
     els.amountInput.value = "";
@@ -105,20 +122,59 @@
     state.expenses = state.expenses.filter(function (expense) {
       return expense.id !== expenseId;
     });
+    state.paidSettlements = [];
     persistAndRender();
     await postThenSync({ action: "deleteExpense", id: expenseId });
   }
 
-  async function closeMonth() {
-    if (!state.expenses.length) return;
-    const confirmed = window.confirm("Reset this month after everyone has paid?");
+  async function markSettlementPaid(event) {
+    const button = event.target.closest("[data-pay-settlement]");
+    if (!button) return;
+    const settlementId = button.dataset.paySettlement;
+    if (!settlementId || state.paidSettlements.includes(settlementId)) return;
+    state.paidSettlements = uniqueStrings([settlementId].concat(state.paidSettlements));
+    persistAndRender();
+    await postThenSync({ action: "markSettlementPaid", cycle: state.currentCycle, settlementId: settlementId });
+  }
+
+  async function closeCycle() {
+    if (!canCloseCycle()) return;
+    const cycle = state.currentCycle || currentCycleId();
+    const nextCycle = nextCycleId(cycle);
+    const expenseCount = state.expenses.length;
+    const message =
+      "Close " +
+      cycleLabel(cycle) +
+      " and start " +
+      cycleLabel(nextCycle) +
+      "?" +
+      (expenseCount ? "" : "\n\nThis cycle has no spending yet.");
+    const confirmed = window.confirm(message);
     if (!confirmed) return;
+
     if (state.apiUrl) {
-      await postThenSync({ action: "closeMonth", people: state.people });
+      await postThenSync({ action: "closeCycle", people: state.people, cycle: cycle });
       return;
     }
-    state.expenses = [];
+
+    closeCycleLocally(cycle);
     persistAndRender();
+  }
+
+  function closeCycleLocally(cycle) {
+    const closedAt = new Date().toISOString();
+    const expenses = state.expenses.slice();
+    const archived = expenses.map(function (expense) {
+      return Object.assign({}, expense, {
+        cycle: cycle,
+        closedAt: closedAt,
+      });
+    });
+    state.archive = normalizeArchive(archived.concat(state.archive));
+    state.cycles = mergeCycles([cycleRecord(cycle, closedAt, expenses, state.people)].concat(state.cycles));
+    state.expenses = [];
+    state.paidSettlements = [];
+    state.currentCycle = nextCycleId(cycle);
   }
 
   function setSplitMode(event) {
@@ -176,18 +232,8 @@
     renderControls();
   }
 
-  function openSettings() {
-    els.personInputs.forEach(function (input, index) {
-      input.value = state.people[index] || DEFAULT_PEOPLE[index];
-    });
-    if (typeof els.settingsDialog.showModal === "function") {
-      els.settingsDialog.showModal();
-    } else {
-      els.settingsDialog.setAttribute("open", "");
-    }
-  }
-
-  async function saveSettings() {
+  async function saveSettings(event) {
+    event.preventDefault();
     const nextPeople = els.personInputs.map(function (input, index) {
       return input.value.trim() || DEFAULT_PEOPLE[index];
     });
@@ -200,25 +246,44 @@
       state.participants = [state.paidBy];
     }
     persistAndRender();
-    closeSettings();
     await postThenSync({ action: "updatePeople", people: state.people });
   }
 
-  function closeSettings() {
-    if (typeof els.settingsDialog.close === "function") {
-      els.settingsDialog.close();
-    } else {
-      els.settingsDialog.removeAttribute("open");
-    }
+  function handleNavClick(event) {
+    const button = event.target.closest("[data-view]");
+    if (!button) return;
+    const view = button.dataset.view;
+    if (!VIEW_NAMES.includes(view)) return;
+    state.view = view;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    renderView();
   }
 
   function render() {
-    els.cycleLabel.textContent = monthLabel();
+    renderView();
     renderControls();
     renderSummary();
     renderSettlements();
-    renderExpenses();
+    renderActiveExpenses();
+    renderCycleTrend();
+    renderCycleList();
+    renderSettings();
     setSyncStatus(state.apiUrl ? "Sheet" : "Local");
+  }
+
+  function renderView() {
+    document.querySelectorAll("[data-view-panel]").forEach(function (panel) {
+      panel.classList.toggle("is-active", panel.dataset.viewPanel === state.view);
+    });
+    els.appNav.querySelectorAll("[data-view]").forEach(function (button) {
+      const isActive = button.dataset.view === state.view;
+      button.classList.toggle("active", isActive);
+      if (isActive) {
+        button.setAttribute("aria-current", "page");
+      } else {
+        button.removeAttribute("aria-current");
+      }
+    });
   }
 
   function renderControls() {
@@ -264,8 +329,11 @@
   }
 
   function renderSummary() {
-    const summary = calculateSummary();
+    const summary = calculateSummary(state.expenses);
+    const label = cycleLabel(state.currentCycle);
     els.totalShared.textContent = money(summary.total);
+    els.activeCycleText.textContent = "Active spending in " + label;
+    els.historyCycleLabel.textContent = label;
     els.personSummary.innerHTML = summary.people
       .map(function (person, index) {
         const balanceClass = person.balance > 0 ? "receive" : person.balance < 0 ? "pay" : "";
@@ -305,13 +373,16 @@
   }
 
   function renderSettlements() {
-    const settlements = calculateSettlements();
+    const settlements = calculateSettlements(state.expenses);
     if (!settlements.length) {
       renderEmpty(els.settlementList, "All square");
+      renderSettlementFooter(settlements);
       return;
     }
     els.settlementList.innerHTML = settlements
       .map(function (settlement) {
+        const id = settlementId(settlement);
+        const paid = state.paidSettlements.includes(id);
         return (
           '<div class="settlement-item">' +
           '<div class="row-icon row-icon-transfer" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h11"/><path d="m15 4 3 3-3 3"/><path d="M17 17H6"/><path d="m9 14-3 3 3 3"/></svg></div>' +
@@ -319,20 +390,135 @@
           escapeHtml(settlement.from) +
           " pays " +
           escapeHtml(settlement.to) +
-          "</strong><small>Monthly settlement</small></div><span>" +
+          '</strong><small>Cycle settlement</small></div><div class="settlement-pay"><span>' +
           money(settlement.amount) +
-          "</span></div>"
+          "</span>" +
+          (paid
+            ? '<span class="paid-label">✓ Paid</span>'
+            : '<button class="pay-button" type="button" data-pay-settlement="' + escapeHtml(id) + '">Pay</button>') +
+          "</div></div>"
+        );
+      })
+      .join("");
+    renderSettlementFooter(settlements);
+  }
+
+  function renderSettlementFooter(settlements) {
+    const canClose = canCloseCycle(settlements);
+    els.closeCycleButton.disabled = !canClose;
+    if (!settlements.length) {
+      els.settlementHelper.textContent = "All square. You can close this cycle now.";
+      return;
+    }
+    els.settlementHelper.textContent = canClose
+      ? "All settlements are paid. You can close this cycle now."
+      : "Mark every settlement as paid before closing this cycle.";
+  }
+
+  function renderActiveExpenses() {
+    renderExpenseList(els.expenseList, state.expenses, {
+      emptyText: "No spending in this cycle yet",
+      canDelete: true,
+    });
+  }
+
+  function renderCycleTrend() {
+    const summaries = cycleSummaries().sort(function (a, b) {
+      return cycleSortValue(a.cycle) - cycleSortValue(b.cycle);
+    });
+    if (!summaries.length) {
+      renderEmpty(els.cycleTrend, "Close a cycle to see the trend");
+      return;
+    }
+
+    const visible = summaries.slice(-6);
+    const maxTotal = Math.max.apply(
+      null,
+      visible.map(function (cycle) {
+        return cycle.total;
+      }),
+    );
+    const maxBarHeight = 128;
+    const minBarHeight = 18;
+
+    els.cycleTrend.innerHTML =
+      '<div class="trend-chart" role="img" aria-label="Cycle spending trend">' +
+      '<div class="trend-chart-grid" style="grid-template-columns:repeat(' +
+      visible.length +
+      ', minmax(0, 1fr))">' +
+      visible
+        .map(function (cycle) {
+          const height = maxTotal ? Math.max(minBarHeight, Math.round((cycle.total / maxTotal) * maxBarHeight)) : minBarHeight;
+          return '<div class="trend-chart-column"><span class="trend-bar" style="height:' + height + 'px"></span></div>';
+        })
+        .join("") +
+      "</div>" +
+      '<div class="trend-label-row" style="grid-template-columns:repeat(' +
+      visible.length +
+      ', minmax(0, 1fr))">' +
+      visible
+        .map(function (cycle) {
+          return (
+            "<span>" +
+            "<small>" +
+            escapeHtml(cycleLabel(cycle.cycle, { short: true })) +
+            "</small>" +
+            "<strong>" +
+            escapeHtml(compactAmount(cycle.total)) +
+            "</strong>" +
+            "</span>"
+          );
+        })
+        .join("") +
+      "</div>";
+  }
+
+  function renderCycleList() {
+    const summaries = cycleSummaries().sort(function (a, b) {
+      return cycleSortValue(b.cycle) - cycleSortValue(a.cycle);
+    });
+    if (!summaries.length) {
+      renderEmpty(els.cycleList, "No closed cycles yet");
+      return;
+    }
+    els.cycleList.innerHTML = summaries
+      .map(function (summary, index) {
+        const expenses = expensesForCycle(summary.cycle);
+        const countText = summary.expenseCount === 1 ? "1 spending" : summary.expenseCount + " spending";
+        return (
+          '<details class="cycle-card" ' +
+          (index === 0 ? "open" : "") +
+          ">" +
+          "<summary>" +
+          "<div><h3>" +
+          escapeHtml(cycleLabel(summary.cycle, { withYear: true })) +
+          "</h3><span>" +
+          countText +
+          "</span></div><strong>" +
+          money(summary.total) +
+          "</strong></summary>" +
+          '<div class="cycle-expenses">' +
+          expenseListHtml(expenses, { emptyText: "No spending saved in this cycle", canDelete: false }) +
+          "</div>" +
+          "</details>"
         );
       })
       .join("");
   }
 
-  function renderExpenses() {
-    if (!state.expenses.length) {
-      renderEmpty(els.expenseList, "No spending yet");
+  function renderExpenseList(target, expenses, options) {
+    if (!expenses.length) {
+      renderEmpty(target, options.emptyText);
       return;
     }
-    els.expenseList.innerHTML = state.expenses
+    target.innerHTML = expenseListHtml(expenses, options);
+  }
+
+  function expenseListHtml(expenses, options) {
+    if (!expenses.length) {
+      return '<div class="empty-state">' + escapeHtml(options.emptyText) + "</div>";
+    }
+    return expenses
       .map(function (expense) {
         const participants = expense.participants
           .map(function (index) {
@@ -341,7 +527,7 @@
           .join(", ");
         return (
           '<article class="expense-item">' +
-          '<div class="row-icon row-icon-payment" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M6 7V5h12v2"/><path d="M6 7v12h12V7"/><path d="M9 11v4"/><path d="M12 11v4"/><path d="M15 11v4"/></svg></div>' +
+          '<div class="row-icon row-icon-payment" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 10h.01"/><path d="M17 14h.01"/><circle cx="12" cy="12" r="2.5"/></svg></div>' +
           '<div class="expense-main">' +
           '<div class="expense-title"><strong>' +
           escapeHtml(expense.item) +
@@ -356,15 +542,25 @@
           escapeHtml(participants) +
           "</div>" +
           "</div>" +
-          '<button class="delete-button" type="button" aria-label="Delete" title="Delete" data-delete-id="' +
-          escapeHtml(expense.id) +
-          '">' +
-          '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>' +
-          "</button>" +
+          (options.canDelete
+            ? '<button class="delete-button" type="button" aria-label="Delete" title="Delete" data-delete-id="' +
+              escapeHtml(expense.id) +
+              '">' +
+              '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>' +
+              "</button>"
+            : "") +
           "</article>"
         );
       })
       .join("");
+  }
+
+  function renderSettings() {
+    els.personInputs.forEach(function (input, index) {
+      if (document.activeElement !== input) {
+        input.value = state.people[index] || DEFAULT_PEOPLE[index];
+      }
+    });
   }
 
   function renderEmpty(target, text) {
@@ -373,12 +569,12 @@
     target.replaceChildren(empty);
   }
 
-  function calculateSummary() {
-    const people = state.people.map(function (name) {
-      return { name: name, paid: 0, share: 0, balance: 0 };
+  function calculateSummary(expenses) {
+    const people = state.people.map(function (name, index) {
+      return { name: name, index: index, paid: 0, share: 0, balance: 0 };
     });
     let total = 0;
-    state.expenses.forEach(function (expense) {
+    expenses.forEach(function (expense) {
       total += expense.amount;
       people[expense.paidBy].paid += expense.amount;
       const share = expense.amount / expense.participants.length;
@@ -394,21 +590,21 @@
     return { total: Math.round(total), people: people };
   }
 
-  function calculateSettlements() {
-    const summary = calculateSummary().people;
+  function calculateSettlements(expenses) {
+    const summary = calculateSummary(expenses).people;
     const debtors = summary
       .filter(function (person) {
         return person.balance < 0;
       })
       .map(function (person) {
-        return { name: person.name, amount: Math.abs(person.balance) };
+        return { name: person.name, index: person.index, amount: Math.abs(person.balance) };
       });
     const creditors = summary
       .filter(function (person) {
         return person.balance > 0;
       })
       .map(function (person) {
-        return { name: person.name, amount: person.balance };
+        return { name: person.name, index: person.index, amount: person.balance };
       });
     const settlements = [];
     let debtorIndex = 0;
@@ -418,7 +614,13 @@
       const creditor = creditors[creditorIndex];
       const amount = Math.min(debtor.amount, creditor.amount);
       if (amount > 0) {
-        settlements.push({ from: debtor.name, to: creditor.name, amount: Math.round(amount) });
+        settlements.push({
+          from: debtor.name,
+          to: creditor.name,
+          fromIndex: debtor.index,
+          toIndex: creditor.index,
+          amount: Math.round(amount),
+        });
       }
       debtor.amount -= amount;
       creditor.amount -= amount;
@@ -426,6 +628,69 @@
       if (creditor.amount < 1) creditorIndex += 1;
     }
     return settlements;
+  }
+
+  function settlementId(settlement) {
+    return [
+      state.currentCycle || currentCycleId(),
+      settlement.fromIndex,
+      settlement.toIndex,
+      Math.round(settlement.amount || 0),
+    ].join(":");
+  }
+
+  function canCloseCycle(settlements) {
+    const currentSettlements = Array.isArray(settlements) ? settlements : calculateSettlements(state.expenses);
+    return currentSettlements.every(function (settlement) {
+      return state.paidSettlements.includes(settlementId(settlement));
+    });
+  }
+
+  function cycleSummaries() {
+    const map = {};
+    state.cycles.forEach(function (cycle) {
+      map[cycle.cycle] = Object.assign({}, cycle);
+    });
+    state.archive.forEach(function (expense) {
+      const cycle = expense.cycle || state.currentCycle || currentCycleId();
+      if (!map[cycle]) {
+        map[cycle] = cycleRecord(cycle, expense.closedAt || expense.createdAt, [], state.people);
+      }
+      if (!map[cycle]._hasArchiveTotals) {
+        map[cycle].total = 0;
+        map[cycle].expenseCount = 0;
+        map[cycle]._hasArchiveTotals = true;
+      }
+      map[cycle].total += Number(expense.amount) || 0;
+      map[cycle].expenseCount += 1;
+    });
+    return Object.keys(map).map(function (cycle) {
+      map[cycle].total = Math.round(map[cycle].total || 0);
+      delete map[cycle]._hasArchiveTotals;
+      return map[cycle];
+    });
+  }
+
+  function expensesForCycle(cycle) {
+    return state.archive
+      .filter(function (expense) {
+        return expense.cycle === cycle;
+      })
+      .sort(function (a, b) {
+        return new Date(b.createdAt || b.closedAt).getTime() - new Date(a.createdAt || a.closedAt).getTime();
+      });
+  }
+
+  function cycleRecord(cycle, closedAt, expenses, people) {
+    return {
+      cycle: cycle,
+      closedAt: closedAt || new Date().toISOString(),
+      total: expenses.reduce(function (sum, expense) {
+        return sum + (Number(expense.amount) || 0);
+      }, 0),
+      expenseCount: expenses.length,
+      people: (people || state.people).slice(0, 3),
+    };
   }
 
   function persistAndRender() {
@@ -439,10 +704,18 @@
       if (!saved) return;
       state.people = Array.isArray(saved.people) && saved.people.length === 3 ? saved.people : DEFAULT_PEOPLE.slice();
       state.expenses = Array.isArray(saved.expenses) ? normalizeExpenses(saved.expenses) : [];
+      state.archive = Array.isArray(saved.archive) ? normalizeArchive(saved.archive) : [];
+      state.cycles = Array.isArray(saved.cycles) ? normalizeCycles(saved.cycles) : [];
+      state.paidSettlements = Array.isArray(saved.paidSettlements) ? uniqueStrings(saved.paidSettlements) : [];
+      state.currentCycle = validCycle(saved.currentCycle) ? saved.currentCycle : currentCycleId();
       state.apiUrl = DEFAULT_API_URL;
     } catch (error) {
       state.people = DEFAULT_PEOPLE.slice();
       state.expenses = [];
+      state.archive = [];
+      state.cycles = [];
+      state.paidSettlements = [];
+      state.currentCycle = currentCycleId();
       state.apiUrl = DEFAULT_API_URL;
     }
   }
@@ -453,6 +726,10 @@
       JSON.stringify({
         people: state.people,
         expenses: state.expenses,
+        archive: state.archive,
+        cycles: state.cycles,
+        paidSettlements: state.paidSettlements,
+        currentCycle: state.currentCycle,
         apiUrl: DEFAULT_API_URL,
       }),
     );
@@ -594,6 +871,18 @@
     if (Array.isArray(result.expenses)) {
       state.expenses = normalizeExpenses(result.expenses);
     }
+    if (Array.isArray(result.archive)) {
+      state.archive = normalizeArchive(result.archive);
+    }
+    if (Array.isArray(result.cycles)) {
+      state.cycles = normalizeCycles(result.cycles);
+    }
+    if (Array.isArray(result.paidSettlements)) {
+      state.paidSettlements = uniqueStrings(result.paidSettlements);
+    }
+    if (validCycle(result.currentCycle)) {
+      state.currentCycle = result.currentCycle;
+    }
     saveLocal();
     render();
   }
@@ -601,22 +890,59 @@
   function normalizeExpenses(expenses) {
     return mergeExpenses(
       expenses
-      .map(function (expense) {
-        return {
-          id: String(expense.id || Date.now()),
-          item: String(expense.item || "Untitled"),
-          amount: Number(expense.amount) || 0,
-          paidBy: clampIndex(expense.paidBy),
-          participants: Array.isArray(expense.participants)
-            ? expense.participants.map(clampIndex).filter(unique)
-            : [0, 1, 2],
-          date: expense.date || today(),
-          createdAt: expense.createdAt || new Date().toISOString(),
-        };
-      })
-      .filter(function (expense) {
-        return expense.amount > 0 && expense.participants.length;
-      }),
+        .map(function (expense) {
+          return normalizeExpense(expense);
+        })
+        .filter(function (expense) {
+          return expense.amount > 0 && expense.participants.length;
+        }),
+    );
+  }
+
+  function normalizeArchive(expenses) {
+    return mergeArchivedExpenses(
+      expenses
+        .map(function (expense) {
+          const normalized = normalizeExpense(expense);
+          normalized.cycle = validCycle(expense.cycle) ? expense.cycle : state.currentCycle || currentCycleId();
+          normalized.closedAt = expense.closedAt || expense.createdAt || new Date().toISOString();
+          return normalized;
+        })
+        .filter(function (expense) {
+          return expense.amount > 0 && expense.participants.length;
+        }),
+    );
+  }
+
+  function normalizeExpense(expense) {
+    return {
+      id: String(expense.id || Date.now()),
+      item: String(expense.item || "Untitled"),
+      amount: Number(expense.amount) || 0,
+      paidBy: clampIndex(expense.paidBy),
+      participants: Array.isArray(expense.participants)
+        ? expense.participants.map(clampIndex).filter(unique)
+        : [0, 1, 2],
+      date: expense.date || today(),
+      createdAt: expense.createdAt || new Date().toISOString(),
+    };
+  }
+
+  function normalizeCycles(cycles) {
+    return mergeCycles(
+      cycles
+        .map(function (cycle) {
+          return {
+            cycle: validCycle(cycle.cycle) ? cycle.cycle : currentCycleId(),
+            closedAt: cycle.closedAt || new Date().toISOString(),
+            total: Number(cycle.total) || 0,
+            expenseCount: Number(cycle.expenseCount) || 0,
+            people: Array.isArray(cycle.people) && cycle.people.length === 3 ? cycle.people : state.people.slice(),
+          };
+        })
+        .filter(function (cycle) {
+          return validCycle(cycle.cycle);
+        }),
     );
   }
 
@@ -633,6 +959,22 @@
     return "Rp " + numberWithDots(value);
   }
 
+  function compactAmount(value) {
+    const amount = Math.round(Number(value) || 0);
+    const absolute = Math.abs(amount);
+    if (absolute >= 1000000) {
+      return trimCompact(amount / 1000000) + "jt";
+    }
+    if (absolute >= 1000) {
+      return trimCompact(amount / 1000) + "rb";
+    }
+    return String(amount);
+  }
+
+  function trimCompact(value) {
+    return (Math.round(value * 10) / 10).toFixed(1).replace(/\.0$/, "");
+  }
+
   function numberWithDots(value) {
     return new Intl.NumberFormat("id-ID", {
       maximumFractionDigits: 0,
@@ -645,8 +987,39 @@
     return date.toISOString().slice(0, 10);
   }
 
-  function monthLabel() {
-    return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date());
+  function currentCycleId() {
+    const date = new Date();
+    return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0");
+  }
+
+  function nextCycleId(cycle) {
+    if (!validCycle(cycle)) return currentCycleId();
+    const parts = cycle.split("-");
+    const date = new Date(Number(parts[0]), Number(parts[1]), 1);
+    return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0");
+  }
+
+  function cycleLabel(cycle, options) {
+    const opts = options || {};
+    if (!validCycle(cycle)) return "This cycle";
+    const parts = cycle.split("-");
+    const date = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
+    if (opts.short) {
+      return new Intl.DateTimeFormat("en", { month: "short" }).format(date);
+    }
+    if (opts.withYear) {
+      return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(date);
+    }
+    return new Intl.DateTimeFormat("en", { month: "long" }).format(date);
+  }
+
+  function validCycle(cycle) {
+    return /^\d{4}-\d{2}$/.test(String(cycle || ""));
+  }
+
+  function cycleSortValue(cycle) {
+    if (!validCycle(cycle)) return 0;
+    return Number(cycle.replace("-", ""));
   }
 
   function readableDate(value) {
@@ -667,6 +1040,40 @@
       })
       .sort(function (a, b) {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }
+
+  function mergeArchivedExpenses(expenses) {
+    const seen = new Set();
+    return expenses
+      .filter(function (expense) {
+        const key = expense.cycle + "-" + expense.id;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort(function (a, b) {
+        return (
+          cycleSortValue(b.cycle) - cycleSortValue(a.cycle) ||
+          new Date(b.createdAt || b.closedAt).getTime() - new Date(a.createdAt || a.closedAt).getTime()
+        );
+      });
+  }
+
+  function mergeCycles(cycles) {
+    const map = {};
+    cycles.forEach(function (cycle) {
+      if (!validCycle(cycle.cycle)) return;
+      if (!map[cycle.cycle]) {
+        map[cycle.cycle] = cycle;
+      }
+    });
+    return Object.keys(map)
+      .map(function (cycle) {
+        return map[cycle];
+      })
+      .sort(function (a, b) {
+        return cycleSortValue(b.cycle) - cycleSortValue(a.cycle);
       });
   }
 
@@ -701,6 +1108,16 @@
 
   function unique(value, index, array) {
     return array.indexOf(value) === index;
+  }
+
+  function uniqueStrings(values) {
+    return (values || [])
+      .map(function (value) {
+        return String(value || "");
+      })
+      .filter(function (value, index, array) {
+        return value && array.indexOf(value) === index;
+      });
   }
 
   function escapeHtml(value) {
