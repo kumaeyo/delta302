@@ -2,6 +2,7 @@ const SHEETS = {
   people: "People",
   expenses: "Expenses",
   archive: "Archive",
+  settlementArchive: "Settlement Payments",
   settings: "Settings",
   cycles: "Cycles",
 };
@@ -9,6 +10,7 @@ const SHEETS = {
 const PEOPLE_HEADERS = ["index", "name"];
 const EXPENSE_HEADERS = ["id", "date", "item", "amount", "paidBy", "participants", "createdAt"];
 const ARCHIVE_HEADERS = ["closedAt", "cycle", "id", "date", "item", "amount", "paidBy", "participants", "createdAt"];
+const SETTLEMENT_ARCHIVE_HEADERS = ["cycle", "id", "paidAt", "from", "to", "fromIndex", "toIndex", "amount", "closedAt"];
 const SETTINGS_HEADERS = ["key", "value"];
 const CYCLE_HEADERS = ["cycle", "closedAt", "total", "expenseCount", "people"];
 
@@ -85,6 +87,7 @@ function readState() {
   const peopleSheet = ensureSheet(spreadsheet, SHEETS.people, PEOPLE_HEADERS);
   const expensesSheet = ensureSheet(spreadsheet, SHEETS.expenses, EXPENSE_HEADERS);
   const archiveSheet = ensureSheet(spreadsheet, SHEETS.archive, ARCHIVE_HEADERS);
+  const settlementArchiveSheet = ensureSheet(spreadsheet, SHEETS.settlementArchive, SETTLEMENT_ARCHIVE_HEADERS);
   const settingsSheet = ensureSheet(spreadsheet, SHEETS.settings, SETTINGS_HEADERS);
   const cyclesSheet = ensureSheet(spreadsheet, SHEETS.cycles, CYCLE_HEADERS);
 
@@ -92,9 +95,21 @@ function readState() {
   const people = readPeople(peopleSheet);
   const expenses = readExpenses(expensesSheet);
   const archive = readArchive(archiveSheet);
-  const currentCycle = validCycle(settings.currentCycle) ? settings.currentCycle : currentCycleId();
+  const settlementArchive = readSettlementArchive(settlementArchiveSheet);
+  let currentCycle = validCycle(settings.currentCycle) ? settings.currentCycle : currentCycleId();
   const paidSettlements = parsePaidSettlements(settings.paidSettlements);
   const cycles = readCycles(cyclesSheet, archive, people);
+
+  if (
+    !expenses.length &&
+    cycles.some(function (cycle) {
+      return cycle.cycle === currentCycle;
+    })
+  ) {
+    currentCycle = nextCycleId(currentCycle);
+    writeSetting("currentCycle", currentCycle);
+    writeSetting("paidSettlements", "[]");
+  }
 
   if (!validCycle(settings.currentCycle)) {
     writeSetting("currentCycle", currentCycle);
@@ -107,6 +122,7 @@ function readState() {
     currentCycle: currentCycle,
     paidSettlements: paidSettlements,
     archive: archive,
+    settlementArchive: settlementArchive,
     cycles: cycles,
   };
 }
@@ -215,6 +231,7 @@ function closeActiveCycle(payload) {
   const closedAt = new Date().toISOString();
   writePeople(people);
   archiveExpenses(current.expenses, cycle, closedAt);
+  archiveSettlementPayments(settlements, paidSettlements, cycle, closedAt);
   upsertCycle(cycle, closedAt, current.expenses, people);
   writeExpenses([]);
   writeSetting("currentCycle", nextCycleId(cycle));
@@ -283,6 +300,64 @@ function archiveExpenses(expenses, cycle, closedAt) {
     });
   if (rows.length) {
     archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, rows.length, ARCHIVE_HEADERS.length).setValues(rows);
+  }
+}
+
+function readSettlementArchive(sheet) {
+  return readRows(sheet).map(function (row) {
+    const amount = Number(row.amount) || 0;
+    const fromIndex = Number(row.fromIndex) || 0;
+    const toIndex = Number(row.toIndex) || 0;
+    const cycle = validCycle(row.cycle) ? String(row.cycle) : currentCycleId();
+    return {
+      type: "settlement",
+      cycle: cycle,
+      id: String(row.id || [cycle, fromIndex, toIndex, Math.round(amount)].join(":")),
+      item: String(row.from || "") + " paid " + String(row.to || ""),
+      from: String(row.from || ""),
+      to: String(row.to || ""),
+      fromIndex: fromIndex,
+      toIndex: toIndex,
+      amount: amount,
+      paidAt: asDateTimeText(row.paidAt),
+      date: asDateTimeText(row.paidAt),
+      createdAt: asDateTimeText(row.paidAt),
+      closedAt: asDateTimeText(row.closedAt),
+    };
+  });
+}
+
+function archiveSettlementPayments(settlements, paidSettlements, cycle, closedAt) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const settlementSheet = ensureSheet(spreadsheet, SHEETS.settlementArchive, SETTLEMENT_ARCHIVE_HEADERS);
+  const existingKeys =
+    settlementSheet.getLastRow() > 1
+      ? settlementSheet.getRange(2, 1, settlementSheet.getLastRow() - 1, 2).getValues().map(function (row) {
+          return String(row[0]) + "-" + String(row[1]);
+        })
+      : [];
+  const rows = (settlements || [])
+    .map(function (settlement) {
+      const record = paidSettlementRecord(paidSettlements, settlement.id);
+      if (!record) return null;
+      const paidAt = record.paidAt || closedAt;
+      return [
+        cycle,
+        settlement.id,
+        paidAt,
+        settlement.from,
+        settlement.to,
+        Number(settlement.fromIndex) || 0,
+        Number(settlement.toIndex) || 0,
+        Number(settlement.amount) || 0,
+        closedAt,
+      ];
+    })
+    .filter(function (row) {
+      return row && existingKeys.indexOf(String(row[0]) + "-" + String(row[1])) === -1;
+    });
+  if (rows.length) {
+    settlementSheet.getRange(settlementSheet.getLastRow() + 1, 1, rows.length, SETTLEMENT_ARCHIVE_HEADERS.length).setValues(rows);
   }
 }
 
@@ -498,6 +573,12 @@ function mergePaidSettlements(values) {
 
 function isSettlementPaid(records, id) {
   return records.some(function (record) {
+    return record.id === id;
+  });
+}
+
+function paidSettlementRecord(records, id) {
+  return (records || []).find(function (record) {
     return record.id === id;
   });
 }

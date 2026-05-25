@@ -42,6 +42,7 @@ Use the same GitHub Pages app on every phone. The Google Sheet is the shared bac
 - `Settings` stores the active cycle name and paid settlement markers with paid time, so every phone shares the same cycle status.
 - `Cycles` stores each closed cycle summary.
 - `Archive` stores closed cycle spending after **Close cycle**.
+- `Settlement Payments` stores paid settlement rows after **Close cycle**, so they still appear in History.
 
 When one phone adds spending, the app appends that record to the Sheet. Other phones will see it after opening the app, refreshing, or tapping **Sync**. If person names are edited, tap **Save** in settings, then tap **Sync** on the other phones.
 
@@ -56,15 +57,16 @@ Check these in order:
 5. Push the newest `app.js` and `sw.js` to GitHub Pages, then fully close and reopen the app on each phone.
 6. If the home-screen app still uses old files, remove the home-screen icon and add it again from the GitHub Pages URL.
 
-The script creates five tabs in the Sheet:
+The script creates six tabs in the Sheet:
 
 - `People`
 - `Expenses`
 - `Archive`
 - `Settings`
 - `Cycles`
+- `Settlement Payments`
 
-Mark each settlement row as **Paid** first. The paid date appears in **Transaction List**. When every settlement is paid, **Close cycle** becomes available. Tapping it moves current expenses into `Archive`, saves a summary in `Cycles`, clears the paid settlement markers, and moves the active cycle to the next month name. The transaction dates can be from any month; the cycle name is controlled separately.
+Mark each settlement row as **Paid** first. The paid date appears in **Transaction List** and is kept in each closed cycle in History. When every settlement is paid, **Close cycle** becomes available. Tapping it moves current expenses into `Archive`, saves paid settlement rows in `Settlement Payments`, saves a summary in `Cycles`, clears the paid settlement markers, and moves the active cycle to the next month name. The transaction dates can be from any month; the cycle name is controlled separately.
 
 ## Data Model
 
